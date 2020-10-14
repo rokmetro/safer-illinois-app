@@ -22,7 +22,6 @@ import 'package:illinois/service/Analytics.dart';
 import 'package:illinois/service/Config.dart';
 import 'package:illinois/service/NotificationService.dart';
 import 'package:illinois/service/Service.dart';
-import 'package:illinois/service/Storage.dart';
 import 'package:illinois/utils/Utils.dart';
 
 class NativeCommunicator with Service {
@@ -101,10 +100,7 @@ class NativeCommunicator with Service {
       
       await _platformChannel.invokeMethod('directions', {
         'explore': jsonData,
-        'options': {
-          'showDebugLocation': Storage().debugMapLocationProvider,
-          'hideLevels': Storage().debugMapHideLevels,
-        }});
+      });
 
       Analytics().logMapHide();
       Analytics().logPage(name: lastPageName, attributes: lastPageAttributes);
@@ -122,10 +118,6 @@ class NativeCommunicator with Service {
 
       await _platformChannel.invokeMethod('map', {
         'target': target,
-        'options': {
-          'showDebugLocation': Storage().debugMapLocationProvider,
-          'hideLevels': Storage().debugMapHideLevels,
-        },
         'markers': markers,
       });
 
@@ -247,6 +239,8 @@ class NativeCommunicator with Service {
     try {
       result = await _platformChannel.invokeMethod('healthRSAPrivateKey', {
         'userId': userId,
+        'environment': configEnvToString(Config().configEnvironment),
+        'organization': null,
       });
     } catch (e) {
       print(e?.toString());
@@ -259,6 +253,8 @@ class NativeCommunicator with Service {
     try {
       result = await _platformChannel.invokeMethod('healthRSAPrivateKey', {
         'userId': userId,
+        'environment': configEnvToString(Config().configEnvironment),
+        'organization': null,
         'value': value,
       });
     } catch (e) {
@@ -272,6 +268,8 @@ class NativeCommunicator with Service {
     try {
       result = await _platformChannel.invokeMethod('healthRSAPrivateKey', {
         'userId': userId,
+        'environment': configEnvToString(Config().configEnvironment),
+        //'organization': null,
         'remove': true,
       });
     } catch (e) {

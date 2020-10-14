@@ -122,6 +122,19 @@ class Auth with Service implements NotificationsListener {
   }
 
   @override
+  Future<void> clearService() async {
+    _authToken = null;
+    _authInfo = null;
+
+    AppFile.delete(_authCardCacheFile);
+    _authCard = null;
+
+    AppFile.delete(_userPiiCacheFile);
+    _userPiiData = null;
+  }
+
+
+  @override
   void destroyService() {
     NotificationService().unsubscribe(this);
   }
@@ -280,7 +293,7 @@ class Auth with Service implements NotificationsListener {
     _applyUserPiiData(newUserPiiData, newUserPiiDataString);
 
     // 8.4 UserData
-    User().applyUserData(newUserData, applyCachedSettings: true);
+    User().applyUserData(newUserData);
 
     // 6.2 Update UserPiiData if need and then apply
     if(newUserPiiData.updateFromAuthInfo(newAuthInfo)){
@@ -434,7 +447,7 @@ class Auth with Service implements NotificationsListener {
     _applyUserPiiData(newUserPiiData, newUserPiiDataString);
 
     // 6.3 apply UserData
-    User().applyUserData(newUserData, applyCachedSettings: true);
+    User().applyUserData(newUserData);
 
     // 6.4 notifyLoggedIn event
     _notifyAuthLoginSucceeded(analyticsAction: Analytics.LogAuthLoginPhoneActionName);
@@ -692,7 +705,7 @@ class Auth with Service implements NotificationsListener {
       DateTime now = DateTime.now();
       int timeUpdate = Storage().authCardTime;
       DateTime dateUpdate = (0 < timeUpdate) ? DateTime.fromMillisecondsSinceEpoch(timeUpdate) : null;
-      if (!kReleaseMode || (dateUpdate == null) || (now.difference(dateUpdate).inSeconds < (3600 * 24))) {
+      if (!kReleaseMode || (dateUpdate == null) || (now.difference(dateUpdate).inSeconds > (3600 * 24))) {
         await _reloadAuthCard();
         Storage().authCardTime = now.millisecondsSinceEpoch;
       }

@@ -24,9 +24,9 @@ import 'package:flutter/foundation.dart';
 import 'package:illinois/model/Health.dart';
 import 'package:illinois/service/Auth.dart';
 import 'package:illinois/service/Connectivity.dart';
-import 'package:illinois/service/AppDateTime.dart';
+import 'package:illinois/ui/widgets/HeaderBar.dart';
+import 'package:illinois/utils/AppDateTime.dart';
 import 'package:illinois/service/FirebaseMessaging.dart';
-import 'package:illinois/service/FlexUI.dart';
 import 'package:illinois/service/Health.dart';
 import 'package:illinois/service/Log.dart';
 import 'package:illinois/service/User.dart';
@@ -37,7 +37,8 @@ import 'package:illinois/service/NotificationService.dart';
 import 'package:illinois/ui/WebPanel.dart';
 import 'package:illinois/ui/health/Covid19QrCodePanel.dart';
 import 'package:illinois/ui/settings/SettingsRolesPanel.dart';
-import 'package:illinois/ui/widgets/HeaderBar.dart';
+import 'package:illinois/ui/settings/SettingsPersonalInfoPanel.dart';
+import 'package:illinois/ui/settings/debug/SettingsDebugPanel.dart';
 import 'package:illinois/ui/widgets/RoundedButton.dart';
 import 'package:illinois/ui/widgets/RibbonButton.dart';
 import 'package:illinois/utils/Covid19.dart';
@@ -48,8 +49,6 @@ import 'package:barcode_scan/barcode_scan.dart';
 import 'package:package_info/package_info.dart';
 import 'package:pointycastle/export.dart' as PointyCastle;
 
-import 'debug/SettingsDebugPanel.dart';
-import 'SettingsPersonalInfoPanel.dart';
 
 class SettingsHomePanel extends StatefulWidget {
   @override
@@ -79,10 +78,11 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   void initState() {
     NotificationService().subscribe(this, [
       Auth.notifyUserPiiDataChanged,
+      Auth.notifyAuthTokenChanged,
       User.notifyUserUpdated,
       FirebaseMessaging.notifySettingUpdated,
-      FlexUI.notifyChanged,
     ]);
+
     _loadVersionInfo();
 
     //TBD move to Health service
@@ -102,11 +102,11 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   void onNotification(String name, dynamic param) {
     if (name == Auth.notifyUserPiiDataChanged) {
       _updateState();
+    } else if (name == Auth.notifyAuthTokenChanged) {
+      _updateState();
     } else if (name == User.notifyUserUpdated){
       _updateState();
     } else if (name == FirebaseMessaging.notifySettingUpdated) {
-      _updateState();
-    } else if (name == FlexUI.notifyChanged) {
       _updateState();
     }
   }
@@ -115,41 +115,38 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   Widget build(BuildContext context) {
     
     List<Widget> contentList = [];
+    List<Widget> actionsList = [];
 
-    List<dynamic> codes = FlexUI()['settings'] ?? [];
+    if (Auth().isLoggedIn) {
+      contentList.add(_buildUserInfo());
+    }
+    else {
+      contentList.add(_buildConnect());
+    }
+    
+    contentList.add(_buildCustomizations());
 
-    for (String code in codes) {
-      if (code == 'user_info') {
-        contentList.add(_buildUserInfo());
-      }
-      else if (code == 'connect') {
-        contentList.add(_buildConnect());
-      }
-      else if (code == 'customizations') {
-        contentList.add(_buildCustomizations());
-      }
-      else if (code == 'connected') {
-        contentList.add(_buildConnected());
-      }
-      else if (code == 'notifications') {
-        contentList.add(_buildNotifications());
-      }
-      else if (code == 'covid19') {
-        contentList.add(_buildCovid19Settings());
-      }
-      else if (code == 'privacy') {
-        contentList.add(_buildPrivacy());
-      }
-      else if (code == 'account') {
-        contentList.add(_buildAccount());
-      }
-      else if (code == 'feedback') {
-        contentList.add(_buildFeedback(),);
-      }
+    if (Auth().isLoggedIn) {
+      contentList.add(_buildConnected());
+    }
+    
+    contentList.add(_buildNotifications());
+
+    if (Auth().isLoggedIn) {
+      contentList.add(_buildCovid19Settings());
     }
 
-    if (!kReleaseMode || (Config().configEnvironment == ConfigEnvironment.dev)) {
+    contentList.add(_buildPrivacy());
+
+    if (Auth().isLoggedIn) {
+      contentList.add(_buildAccount());
+    }
+
+    contentList.add(_buildFeedback());
+
+    if (!kReleaseMode || Config().isDev) {
       contentList.add(_buildDebug());
+      actionsList.add(_buildHeaderBarDebug());
     }
 
     contentList.add(_buildVersionInfo());
@@ -177,6 +174,7 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
             ),
           ),
         )),
+        actions: actionsList,
       ),
       body: Column(
         children: <Widget>[
@@ -201,11 +199,20 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
 
   // User Info
 
+  String get _greeting {
+    switch (AppDateTime.timeOfDay()) {
+      case AppTimeOfDay.Morning:   return Localization().getStringEx("logic.date_time.greeting.morning", "Good morning");
+      case AppTimeOfDay.Afternoon: return Localization().getStringEx("logic.date_time.greeting.afternoon", "Good afternoon");
+      case AppTimeOfDay.Evening:   return Localization().getStringEx("logic.date_time.greeting.evening", "Good evening");
+    }
+    return Localization().getStringEx("logic.date_time.greeting.day", "Good day");
+  }
+
   Widget _buildUserInfo() {
     String fullName = Auth()?.userPiiData?.fullName ?? "";
     bool hasFullName =  AppString.isStringNotEmpty(fullName);
     String welcomeMessage = AppString.isStringNotEmpty(fullName)
-        ? AppDateTime().getDayGreeting() + ","
+        ? _greeting + ","
         : Localization().getStringEx("panel.settings.home.user_info.title.sufix", "Welcome to Illinois");
     return
       Semantics( container: true,
@@ -236,61 +243,55 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
       ),
     );
 
-    List<dynamic> codes = FlexUI()['settings.connect'] ?? [];
-    for (String code in codes) {
-      if (code == 'netid') {
-          contentList.add(Padding(
-            padding: EdgeInsets.all(10),
-            child: new RichText(
-              textScaleFactor: MediaQuery.textScaleFactorOf(context),
-              text: new TextSpan(
-                style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16),
-                children: <TextSpan>[
-                  new TextSpan(text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_1", "Are you a ")),
-                  new TextSpan(
-                      text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_2", "student"),
-                      style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
-                  new TextSpan(text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_3", " or ")),
-                  new TextSpan(
-                      text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_4", "faculty member"),
-                      style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
-                  new TextSpan(
-                      text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_5",
-                          "? Log in with your NetID to see Illinois information specific to you, like your Illini Cash and meal plan."))
-                ],
-              ),
-            )),);
-          contentList.add(RibbonButton(
-            height: null,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            borderRadius: _allRounding,
-            label: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.title", "Connect your NetID"),
-            onTap: _onConnectNetIdClicked),);
-      }
-      /*else if (code == 'phone') {
-          contentList.add(Padding(
-            padding: EdgeInsets.all(10),
-            child: new RichText(
-              textScaleFactor: MediaQuery.textScaleFactorOf(context),
-              text: new TextSpan(
-                style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16),
-                children: <TextSpan>[
-                  new TextSpan(
-                      text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.description.part_1", "Don't have a NetID"),
-                      style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
-                  new TextSpan(
-                      text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.description.part_2",
-                          "? Verify your phone number to save your preferences and have the same experience on more than one device.")),
-                ],
-              ),
-            )),);
-          contentList.add(RibbonButton(
-            borderRadius: _allRounding,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.title", "Verify Your Phone Number"),
-            onTap: _onPhoneVerClicked),);
-      }*/
-    }
+    contentList.add(Padding(
+      padding: EdgeInsets.all(10),
+      child: new RichText(
+        textScaleFactor: MediaQuery.textScaleFactorOf(context),
+        text: new TextSpan(
+          style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16),
+          children: <TextSpan>[
+            new TextSpan(text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_1", "Are you a ")),
+            new TextSpan(
+                text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_2", "student"),
+                style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
+            new TextSpan(text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_3", " or ")),
+            new TextSpan(
+                text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_4", "faculty member"),
+                style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
+            new TextSpan(
+                text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.description.part_5",
+                    "? Log in with your NetID to see Illinois information specific to you, like your Illini Cash and meal plan."))
+          ],
+        ),
+      )),);
+    contentList.add(RibbonButton(
+      height: null,
+      border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+      borderRadius: _allRounding,
+      label: Localization().getStringEx("panel.settings.home.connect.not_logged_in.netid.title", "Connect your NetID"),
+      onTap: _onConnectNetIdClicked),);
+
+    /*contentList.add(Padding(
+      padding: EdgeInsets.all(10),
+      child: new RichText(
+        textScaleFactor: MediaQuery.textScaleFactorOf(context),
+        text: new TextSpan(
+          style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16),
+          children: <TextSpan>[
+            new TextSpan(
+                text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.description.part_1", "Don't have a NetID"),
+                style: TextStyle(color: Styles().colors.fillColorPrimary, fontFamily: Styles().fontFamilies.bold)),
+            new TextSpan(
+                text: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.description.part_2",
+                    "? Verify your phone number to save your preferences and have the same experience on more than one device.")),
+          ],
+        ),
+      )),);
+    contentList.add(RibbonButton(
+      borderRadius: _allRounding,
+      border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+      label: Localization().getStringEx("panel.settings.home.connect.not_logged_in.phone.title", "Verify Your Phone Number"),
+      onTap: _onPhoneVerClicked),);*/
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -301,54 +302,37 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   }
 
   void _onConnectNetIdClicked() {
-    Analytics.instance.logSelect(target: "Connect netId");
-    Auth().authenticateWithShibboleth();
-  }
-
-  /*void _onPhoneVerClicked() {
-    Analytics.instance.logSelect(target: "Phone Verification");
     if (Connectivity().isNotOffline) {
-      Navigator.push(context, CupertinoPageRoute(settings: RouteSettings(), builder: (context) => OnboardingLoginPhoneVerifyPanel(onFinish: _didPhoneVer,)));
+      Analytics.instance.logSelect(target: "Connect netId");
+      Auth().authenticateWithShibboleth();
     } else {
-      AppAlert.showOfflineMessage(context, Localization().getStringEx('panel.settings.label.offline.phone_ver', 'Verify Your Phone Number is not available while offline.'));
+      AppAlert.showOfflineMessage(context);
     }
-  }*/
-
-  /*void _didPhoneVer(_) {
-    Navigator.of(context)?.popUntil((Route route){
-      return AppNavigation.routeRootWidget(route, context: context)?.runtimeType == widget.runtimeType;
-    });
-  }*/
+  }
 
   // Customizations
 
   Widget _buildCustomizations() {
-    List<Widget> customizationOptions = new List();
-    List<dynamic> codes = FlexUI()['settings.customizations'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      
-      if (code == 'roles') {
-        customizationOptions.add(RibbonButton(
-            height: null,
-            borderRadius: borderRadius,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.customizations.role.title", "Who you are"),
-            onTap: _onWhoAreYouClicked));
-      }
-    }
-
     return _OptionsSection(
       title: Localization().getStringEx("panel.settings.home.customizations.title", "Customizations"),
-      widgets: customizationOptions,);
+      widgets: <Widget>[
+        RibbonButton(
+          height: null,
+          borderRadius: _borderRadiusFromIndex(0, 1),
+          border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+          label: Localization().getStringEx("panel.settings.home.customizations.role.title", "Who you are"),
+          onTap: _onWhoAreYouClicked),
+      ],);
 
   }
 
   void _onWhoAreYouClicked() {
-    Analytics.instance.logSelect(target: "Who are you");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsRolesPanel()));
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Who are you");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsRolesPanel()));
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   // Connected
@@ -356,110 +340,80 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   Widget _buildConnected() {
     List<Widget> contentList = new List();
 
-    List<dynamic> codes = FlexUI()['settings.connected'] ?? [];
-    for (String code in codes) {
-      if (code == 'netid') {
-        contentList.add(_OptionsSection(
-          title: Localization().getStringEx("panel.settings.home.net_id.title", "Illinois NetID"),
-          widgets: _buildConnectedNetIdLayout()));
-      }
-      else if (code == 'phone') {
-        contentList.add(_OptionsSection(
-          title: Localization().getStringEx("panel.settings.home.phone_ver.title", "Phone Verification"),
-          widgets: _buildConnectedPhoneLayout()));
-      }
+    if (Auth().isShibbolethLoggedIn) {
+      contentList.add(_OptionsSection(
+        title: Localization().getStringEx("panel.settings.home.net_id.title", "Illinois NetID"),
+        widgets: _buildConnectedNetIdLayout()));
     }
-    return Column(children: contentList,);
 
+    if (Auth().isPhoneLoggedIn) {
+      contentList.add(_OptionsSection(
+        title: Localization().getStringEx("panel.settings.home.phone_ver.title", "Phone Verification"),
+        widgets: _buildConnectedPhoneLayout()));
+    }
+
+    return Column(children: contentList,);
   }
 
   List<Widget> _buildConnectedNetIdLayout() {
-    List<Widget> contentList = List();
+    return <Widget>[
+      Semantics( container: true,
+        child: Container(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            borderRadius: _borderRadiusFromIndex(0, 2),
+            border: Border.all(color: Styles().colors.surfaceAccent,
+            width: 0.5)),
+          child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
+                Text(Localization().getStringEx("panel.settings.home.net_id.message", "Connected as "),
+                    style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16)),
+                Text(Auth().userPiiData?.fullName ?? "",
+                    style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),
+              ])))),
 
-    List<dynamic> codes = FlexUI()['settings.connected.netid'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      if (code == 'info') {
-        contentList.add(
-          Semantics( container: true,
-            child: Container(
-              width: double.infinity,
-              decoration: BoxDecoration(borderRadius: borderRadius, border: Border.all(color: Styles().colors.surfaceAccent, width: 0.5)),
-              child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-                    Text(Localization().getStringEx("panel.settings.home.net_id.message", "Connected as "),
-                        style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16)),
-                    Text(Auth().userPiiData?.fullName ?? "",
-                        style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),
-                  ])))));
-      }
-      else if (code == 'connect') {
-        contentList.add(RibbonButton(
-            height: null,
-            borderRadius: borderRadius,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.net_id.button.connect", "Connect your NetID"),
-            onTap: _onConnectNetIdClicked));
-      }
-      else if (code == 'disconnect') {
-        contentList.add(RibbonButton(
-            height: null,
-            borderRadius: borderRadius,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.net_id.button.disconnect", "Disconnect your NetID"),
-            onTap: _onDisconnectNetIdClicked));
-      }
-    }
-
-    return contentList;
+      RibbonButton(
+        height: null,
+        borderRadius: _borderRadiusFromIndex(1, 2),
+        border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+        label: Localization().getStringEx("panel.settings.home.net_id.button.disconnect", "Disconnect your NetID"),
+        onTap: _onDisconnectNetIdClicked),
+    ];
   }
 
   List<Widget> _buildConnectedPhoneLayout() {
-    List<Widget> contentList = List();
 
     String fullName = Auth()?.userPiiData?.fullName ?? "";
     bool hasFullName = AppString.isStringNotEmpty(fullName);
 
-    List<dynamic> codes = FlexUI()['settings.connected.phone'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      if (code == 'info') {
-        contentList.add(Container(
-          width: double.infinity,
-          decoration: BoxDecoration(borderRadius: borderRadius, border: Border.all(color: Styles().colors.surfaceAccent, width: 0.5)),
-          child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-                Text(Localization().getStringEx("panel.settings.home.phone_ver.message", "Verified as "),
-                    style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16)),
-                Visibility(visible: hasFullName, child: Text(fullName ?? "", style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),),
-                Text(Auth().phoneToken?.phone ?? "", style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),
-              ]))));
-      }
-      /*else if (code == 'verify') {
-        contentList.add(RibbonButton(
-            borderRadius: borderRadius,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.phone_ver.button.connect", "Verify Your Phone Number"),
-            onTap: _onPhoneVerClicked));
-      }*/
-      else if (code == 'disconnect') {
-        contentList.add(RibbonButton(
-            height: null,
-            borderRadius: borderRadius,
-            border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-            label: Localization().getStringEx("panel.settings.home.phone_ver.button.disconnect","Disconnect your Phone",),
-            onTap: _onDisconnectNetIdClicked));
-      }
-    }
-    return contentList;
+    return <Widget>[
+      Container(
+        width: double.infinity,
+        decoration: BoxDecoration(
+          borderRadius: _borderRadiusFromIndex(0, 2),
+          border: Border.all(color: Styles().colors.surfaceAccent,
+          width: 0.5)),
+        child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
+              Text(Localization().getStringEx("panel.settings.home.phone_ver.message", "Verified as "),
+                  style: TextStyle(color: Styles().colors.textBackground, fontFamily: Styles().fontFamilies.regular, fontSize: 16)),
+              Visibility(visible: hasFullName, child: Text(fullName ?? "", style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),),
+              Text(Auth().phoneToken?.phone ?? "", style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 20)),
+            ]))),
+
+      RibbonButton(
+        height: null,
+        borderRadius: _borderRadiusFromIndex(1, 2),
+        border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+        label: Localization().getStringEx("panel.settings.home.phone_ver.button.disconnect","Disconnect your Phone",),
+        onTap: _onDisconnectNetIdClicked),
+    ];
   }
 
   void _onDisconnectNetIdClicked() {
-    if(Auth().isShibbolethLoggedIn) {
+    if (Auth().isShibbolethLoggedIn) {
       Analytics.instance.logSelect(target: "Disconnect netId");
     } else {
       Analytics.instance.logSelect(target: "Disconnect phone");
@@ -513,31 +467,26 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
   // NotificationsOptions
 
   Widget _buildNotifications() {
-    List<Widget> contentList = new List();
-
-    List<dynamic> codes = FlexUI()['settings.notifications'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      if (code == 'covid19') {
-        contentList.add(ToggleRibbonButton(
+    return _OptionsSection(
+      title: Localization().getStringEx("panel.settings.home.notifications.title", "Notifications"),
+      widgets: <Widget>[
+        ToggleRibbonButton(
           height: null,
-          borderRadius: borderRadius,
+          borderRadius: _borderRadiusFromIndex(0, 1),
           label: Localization().getStringEx("panel.settings.home.notifications.covid19", "COVID-19 notifications"),
           toggled: FirebaseMessaging().notifyCovid19,
           context: context,
-          onTap: _onCovid19Toggled));
-      }
-    }
-
-    return _OptionsSection(
-      title: Localization().getStringEx("panel.settings.home.notifications.title", "Notifications"),
-      widgets: contentList);
+          onTap: _onCovid19Toggled),
+      ]);
   }
 
   void _onCovid19Toggled() {
-    Analytics.instance.logSelect(target: "COVID-19 notifications");
-    FirebaseMessaging().notifyCovid19 = !FirebaseMessaging().notifyCovid19;
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "COVID-19 notifications");
+      FirebaseMessaging().notifyCovid19 = !FirebaseMessaging().notifyCovid19;
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   //TBD move to Health service
@@ -684,32 +633,25 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
       ));
     }
     else {
-      List<dynamic> codes = FlexUI()['settings.covid19'] ?? [];
-      for (int index = 0; index < codes.length; index++) {
-        String code = codes[index];
-        BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-        if (code == 'exposure_notifications') {
-          contentList.add(ToggleRibbonButton(
-              height: null,
-              borderRadius: borderRadius,
-              label: Localization().getStringEx("panel.settings.home.covid19.exposure_notifications", "Exposure Notifications"),
-              toggled: (_healthUser?.exposureNotification == true),
-              context: context,
-              onTap: _onExposureNotifications));
-        }
-        else if (code == 'provider_test_result') {
-          contentList.add(ToggleRibbonButton(
-              height: null,
-              borderRadius: borderRadius,
-              label: Localization().getStringEx("panel.settings.home.covid19.provider_test_result", "Health Provider Test Results"),
-              toggled: (_healthUser?.consent == true),
-              context: context,
-              onTap: _onProviderTestResult));
-        }
-        else if (code == 'qr_code') {
-          contentList.add(Padding(padding: EdgeInsets.only(left: 8, top: 16), child: _buildCovid19KeysSection(),));
-        }
-      }
+      contentList.add(ToggleRibbonButton(
+          height: null,
+          borderRadius: _borderRadiusFromIndex(0, 2),
+          label: Localization().getStringEx("panel.settings.home.covid19.exposure_notifications", "Exposure Notifications"),
+          toggled: (_healthUser?.exposureNotification == true),
+          context: context,
+          onTap: _onExposureNotifications));
+
+      contentList.add(ToggleRibbonButton(
+          height: null,
+          borderRadius: _borderRadiusFromIndex(1, 2),
+          label: Localization().getStringEx("panel.settings.home.covid19.provider_test_result", "Health Provider Test Results"),
+          toggled: (_healthUser?.consent == true),
+          context: context,
+          onTap: _onProviderTestResult));
+
+      contentList.add(
+        Padding(padding: EdgeInsets.only(left: 8, top: 16), child:
+          _buildCovid19KeysSection(),));
     }
 
     return _OptionsSection(
@@ -816,193 +758,216 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
 
   
   void _onExposureNotifications() {
-    Analytics.instance.logSelect(target: "Exposure Notifications");
-    bool exposureNotification = _healthUser?.exposureNotification ?? false;
-    _updateHealthUser(exposureNotification: !exposureNotification);
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Exposure Notifications");
+      bool exposureNotification = _healthUser?.exposureNotification ?? false;
+      _updateHealthUser(exposureNotification: !exposureNotification);
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   void _onProviderTestResult() {
-    Analytics.instance.logSelect(target: "Health Provider Test Results");
-    bool consent = _healthUser?.consent ?? false;
-    _updateHealthUser(consent: !consent);
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Health Provider Test Results");
+      bool consent = _healthUser?.consent ?? false;
+      _updateHealthUser(consent: !consent);
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   void _onTapCovid19Login() {
-    Analytics.instance.logSelect(target: "Retry");
-    _loadHealthUser();
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Retry");
+      _loadHealthUser();
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   void _onTapCovid19ResetKeys() {
-    Analytics.instance.logSelect(target: "Reset");
-    String message = Localization().getStringEx('panel.settings.home.covid19.alert.reset.prompt', 'Doing this will provide you a new COVID-19 Secret QRcode but your previous COVID-19 event history will be lost, continue?');
-    if (_refreshingHealthUserKeys != true) {
-      showDialog(
-        context: context,
-        builder: (BuildContext buildContext) {
-          return AlertDialog(
-            content: Text(message, style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
-            actions: <Widget>[
-              FlatButton(
-                child: Text(Localization().getStringEx("dialog.yes.title", "Yes"), style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
-                onPressed: () {
-                  Analytics.instance.logAlert(text: message, selection: "Yes");
-                  Navigator.pop(buildContext, true);
-                }
-              ),
-              FlatButton(
-                child: Text(Localization().getStringEx("dialog.no.title", "No"), style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
-                onPressed: () {
-                  Analytics.instance.logAlert(text: message, selection: "No");
-                  Navigator.pop(buildContext, false);
-                }
-              ),
-            ],
-          );
-        }
-      ).then((result) {
-        if (result == true) {
-          _refreshHealthRSAKeys();
-        }
-      });
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Reset");
+      String message = Localization().getStringEx(
+          'panel.settings.home.covid19.alert.reset.prompt', 'Doing this will provide you a new COVID-19 Secret QRcode but your previous COVID-19 event history will be lost, continue?');
+      if (_refreshingHealthUserKeys != true) {
+        showDialog(
+            context: context,
+            builder: (BuildContext buildContext) {
+              return AlertDialog(
+                content: Text(message, style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
+                actions: <Widget>[
+                  FlatButton(
+                      child: Text(
+                          Localization().getStringEx("dialog.yes.title", "Yes"), style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
+                      onPressed: () {
+                        Analytics.instance.logAlert(text: message, selection: "Yes");
+                        Navigator.pop(buildContext, true);
+                      }
+                  ),
+                  FlatButton(
+                      child: Text(Localization().getStringEx("dialog.no.title", "No"), style: TextStyle(color: Styles().colors.fillColorPrimary, fontSize: 16, fontFamily: Styles().fontFamilies.bold)),
+                      onPressed: () {
+                        Analytics.instance.logAlert(text: message, selection: "No");
+                        Navigator.pop(buildContext, false);
+                      }
+                  ),
+                ],
+              );
+            }
+        ).then((result) {
+          if (result == true) {
+            _refreshHealthRSAKeys();
+          }
+        });
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
     }
   }
 
   void _onTapShowCovid19QrCode() {
-    Analytics.instance.logSelect(target: "Show COVID-19 Secret QRcode");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19QrCodePanel()));
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Show COVID-19 Secret QRcode");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19QrCodePanel()));
+    }
   }
 
   void _onTapScanCovid19QrCode() {
-    Analytics.instance.logSelect(target: "Scan COVID-19 Secret QRcode");
-    BarcodeScanner.scan().then((result) {
-      // barcode_scan plugin returns 8 digits when it cannot read the qr code. Prevent it from storing such values
-      if (AppString.isStringEmpty(result) || (result.length <= 8)) {
-        AppAlert.showDialogResult(context, Localization().getStringEx('panel.settings.home.covid19.alert.qr_code.scan.failed.msg', 'Failed to read QR code.'));
-      }
-      else {
-        _onCovid19QrCodeScanSucceeded(result);
-      }
-    });
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Scan COVID-19 Secret QRcode");
+      BarcodeScanner.scan().then((result) {
+        // barcode_scan plugin returns 8 digits when it cannot read the qr code. Prevent it from storing such values
+        if (AppString.isStringEmpty(result) || (result.length <= 8)) {
+          AppAlert.showDialogResult(context, Localization().getStringEx('panel.settings.home.covid19.alert.qr_code.scan.failed.msg', 'Failed to read QR code.'));
+        }
+        else {
+          _onCovid19QrCodeScanSucceeded(result);
+        }
+      });
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   void _onTapLoadCovid19QrCode() {
-    Analytics.instance.logSelect(target: "Load COVID-19 Secret QRcode");
-    Covid19Utils.loadQRCodeImageFromPictures().then((String qrCodeString) {
-      _onCovid19QrCodeScanSucceeded(qrCodeString);
-    });
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Load COVID-19 Secret QRcode");
+      Covid19Utils.loadQRCodeImageFromPictures().then((String qrCodeString) {
+        _onCovid19QrCodeScanSucceeded(qrCodeString);
+      });
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
   }
 
   void _onCovid19QrCodeScanSucceeded(String result) {
+    if (Connectivity().isNotOffline) {
+      PointyCastle.PrivateKey privateKey;
+      try {
+        Uint8List pemCompressedData = (result != null) ? base64.decode(result) : null;
+        List<int> pemData = (pemCompressedData != null) ? GZipDecoder().decodeBytes(pemCompressedData) : null;
+        privateKey = (pemData != null) ? RsaKeyHelper.parsePrivateKeyFromPemData(pemData) : null;
+      }
+      catch (e) {
+        print(e?.toString());
+      }
 
-    PointyCastle.PrivateKey privateKey;
-    try {
-      Uint8List pemCompressedData = (result != null) ? base64.decode(result) : null;
-      List<int> pemData = (pemCompressedData != null) ? GZipDecoder().decodeBytes(pemCompressedData) : null;
-      privateKey = (pemData != null) ? RsaKeyHelper.parsePrivateKeyFromPemData(pemData) : null;
-    }
-    catch (e) {
-      print(e?.toString());
-    }
-    
-    if (privateKey != null) {
-      RsaKeyHelper.verifyRsaKeyPair(PointyCastle.AsymmetricKeyPair<PointyCastle.PublicKey, PointyCastle.PrivateKey>(_healthUser?.publicKey, privateKey)).then((bool result) {
-        if (mounted) {
-          if (result == true) {
-            Health().setUserRSAPrivateKey(privateKey).then((success) {
-              if (mounted) {
-                String resultMessage = success ? Localization().getStringEx(
-                    'panel.settings.home.covid19.alert.qr_code.transfer.succeeded.msg', 'COVID-19 secret transferred successfully.') : Localization()
-                    .getStringEx('panel.settings.home.covid19.alert.qr_code.transfer.failed.msg', 'Failed to transfer COVID-19 secret.');
-                AppAlert.showDialogResult(context, resultMessage).then((_){
-                  if (success) {
-                    setState(() {
-                      _healthUserPrivateKey = privateKey;
-                      _healthUserKeysPaired = true;
-                    });
-                  }
-                });
-              }
-            });
+      if (privateKey != null) {
+        RsaKeyHelper.verifyRsaKeyPair(PointyCastle.AsymmetricKeyPair<PointyCastle.PublicKey, PointyCastle.PrivateKey>(_healthUser?.publicKey, privateKey)).then((bool result) {
+          if (mounted) {
+            if (result == true) {
+              Health().setUserRSAPrivateKey(privateKey).then((success) {
+                if (mounted) {
+                  String resultMessage = success ? Localization().getStringEx(
+                      'panel.settings.home.covid19.alert.qr_code.transfer.succeeded.msg', 'COVID-19 secret transferred successfully.') : Localization()
+                      .getStringEx('panel.settings.home.covid19.alert.qr_code.transfer.failed.msg', 'Failed to transfer COVID-19 secret.');
+                  AppAlert.showDialogResult(context, resultMessage).then((_) {
+                    if (success) {
+                      setState(() {
+                        _healthUserPrivateKey = privateKey;
+                        _healthUserKeysPaired = true;
+                      });
+                    }
+                  });
+                }
+              });
+            }
+            else {
+              AppAlert.showDialogResult(context, Localization().getStringEx('panel.health.covid19.alert.qr_code.not_match.msg', 'COVID-19 secret key does not match existing public RSA key.'));
+            }
           }
-          else {
-            AppAlert.showDialogResult(context, Localization().getStringEx('panel.health.covid19.alert.qr_code.not_match.msg', 'COVID-19 secret key does not match existing public RSA key.'));
-          }
-        }
-      });
+        });
+      }
+      else {
+        AppAlert.showDialogResult(context, Localization().getStringEx('panel.health.covid19.alert.qr_code.invalid.msg', 'Invalid QR code.'));
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
     }
-    else {
-      AppAlert.showDialogResult(context, Localization().getStringEx('panel.health.covid19.alert.qr_code.invalid.msg', 'Invalid QR code.'));
-    }
-
   }
 
   // Privacy
 
   Widget _buildPrivacy() {
-    List<Widget> contentList = new List();
-
-    List<dynamic> codes = FlexUI()['settings.privacy'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      if (code == 'statement') {
-        contentList.add(RibbonButton(
+    return _OptionsSection(
+      title: Localization().getStringEx("panel.settings.home.privacy.title", "Privacy"),
+      widgets: <Widget>[
+        RibbonButton(
           height: null,
-          borderRadius: borderRadius,
+          borderRadius: _borderRadiusFromIndex(0, 1),
+          leftIcon: 'images/external-link.png',
           border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
           label: Localization().getStringEx("panel.settings.home.privacy.privacy_statement.title", "Privacy Statement"),
           onTap: _onPrivacyStatementClicked,
-        ));
-      }
-    }
-
-    return _OptionsSection(
-      title: Localization().getStringEx("panel.settings.home.privacy.title", "Privacy"),
-      widgets: contentList);
+        ),
+      ]);
   }
 
   void _onPrivacyStatementClicked() {
-    Analytics.instance.logSelect(target: "Privacy Statement");
-    if (Config().privacyPolicyUrl != null) {
-      Navigator.push(context, CupertinoPageRoute(builder: (context) => WebPanel(url: Config().privacyPolicyUrl, title: Localization().getStringEx("panel.settings.privacy_statement.label.title", "Privacy Statement"),)));
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Privacy Statement");
+      if (Config().privacyPolicyUrl != null) {
+        Navigator.push(context, CupertinoPageRoute(
+            builder: (context) => WebPanel(url: Config().privacyPolicyUrl, title: Localization().getStringEx("panel.settings.privacy_statement.label.title", "Privacy Statement"),)));
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
     }
   }
 
   // Account
 
   Widget _buildAccount() {
-    List<Widget> contentList = new List();
-
-    List<dynamic> codes = FlexUI()['settings.account'] ?? [];
-    for (int index = 0; index < codes.length; index++) {
-      String code = codes[index];
-      BorderRadius borderRadius = _borderRadiusFromIndex(index, codes.length);
-      if (code == 'personal_info') {
-        contentList.add(RibbonButton(
-          height: null,
-          border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
-          borderRadius: borderRadius,
-          label: Localization().getStringEx("panel.settings.home.account.personal_info.title", "Personal Info"),
-          onTap: _onPersonalInfoClicked));
-      }
-    }
-
     return _OptionsSection(
       title: Localization().getStringEx("panel.settings.home.account.title", "Your Account"),
-      widgets: contentList,
+      widgets: <Widget>[
+        RibbonButton(
+          height: null,
+          border: Border.all(color: Styles().colors.surfaceAccent, width: 0),
+          borderRadius: _borderRadiusFromIndex(0, 1),
+          label: Localization().getStringEx("panel.settings.home.account.personal_info.title", "Personal Info"),
+          onTap: _onPersonalInfoClicked),
+      ],
     );
   }
 
   void _onPersonalInfoClicked() {
-    Analytics.instance.logSelect(target: "Personal Info");
-    if (Auth().isLoggedIn) {
-      Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsPersonalInfoPanel()));
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Personal Info");
+      if (Auth().isLoggedIn) {
+        Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsPersonalInfoPanel()));
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
     }
   }
 
   // Feedback
 
   Widget _buildFeedback(){
+
     return Column(
       children: <Widget>[
         Padding(
@@ -1028,6 +993,7 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
             fontSize: 16.0,
             textColor: Styles().colors.fillColorPrimary,
             borderColor: Styles().colors.fillColorSecondary,
+            showExternalLink: true,
             onTap: _onFeedbackClicked,
           ),
         ),
@@ -1035,39 +1001,22 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
     );
   }
 
-  String _constructFeedbackParams(String email, String phone, String name) {
-    Map params = Map();
-    params['email'] = Uri.encodeComponent(email != null ? email : "");
-    params['phone'] = Uri.encodeComponent(phone != null ? phone : "");
-    params['name'] = Uri.encodeComponent(name != null ? name : "");
-
-    String result = "";
-    if (params.length > 0) {
-      result += "?";
-      params.forEach((key, value) =>
-      result+= key + "=" + value + "&"
-      );
-      result = result.substring(0, result.length - 1); //remove the last symbol &
-    }
-    return result;
-  }
-
   void _onFeedbackClicked() {
-    Analytics.instance.logSelect(target: "Provide Feedback");
+    if (Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Provide Feedback");
 
-    if (Connectivity().isNotOffline && (Config().feedbackUrl != null)) {
-      String email = Auth().userPiiData?.email;
-      String name =  Auth().userPiiData?.fullName;
-      String phone = Auth().phoneToken?.phone;
-      String params = _constructFeedbackParams(email, phone, name);
-      String feedbackUrl = Config().feedbackUrl + params;
+      if (Connectivity().isNotOffline && (Config().feedbackUrl != null)) {
+        String feedbackUrl = Config().feedbackUrl;
 
-      String panelTitle = Localization().getStringEx('panel.settings.feedback.label.title', 'PROVIDE FEEDBACK');
-      Navigator.push(
-          context, CupertinoPageRoute(builder: (context) => WebPanel(url: feedbackUrl, title: panelTitle,)));
-    }
-    else {
-      AppAlert.showOfflineMessage(context, Localization().getStringEx('panel.settings.label.offline.feedback', 'Providing a Feedback is not available while offline.'));
+        String panelTitle = Localization().getStringEx('panel.settings.feedback.label.title', 'PROVIDE FEEDBACK');
+        Navigator.push(
+            context, CupertinoPageRoute(builder: (context) => WebPanel(url: feedbackUrl, title: panelTitle,)));
+      }
+      else {
+        AppAlert.showOfflineMessage(context, Localization().getStringEx('panel.settings.label.offline.feedback', 'Providing a Feedback is not available while offline.'));
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
     }
   }
 
@@ -1083,19 +1032,30 @@ class _SettingsHomePanelState extends State<SettingsHomePanel> implements Notifi
         fontSize: 16.0,
         textColor: Styles().colors.fillColorPrimary,
         borderColor: Styles().colors.fillColorSecondary,
-        onTap: _onDebugClicked(),
+        onTap: () { _onDebugClicked(); },
       ),
     ); 
   }
 
-  Function _onDebugClicked() {
-    return () {
-      Analytics.instance.logSelect(target: "Debug");
-      Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsDebugPanel()));
-    };
+  Widget _buildHeaderBarDebug() {
+    return Semantics(
+      label: Localization().getStringEx('panel.settings.home.button.debug.title', 'Debug'),
+      hint: Localization().getStringEx('panel.settings.home.button.debug.hint', ''),
+      button: true,
+      excludeSemantics: true,
+      child: IconButton(
+        icon: Image.asset('images/debug-white.png'),
+        onPressed: _onDebugClicked)
+    );
   }
 
-  //Version Info
+  void _onDebugClicked() {
+    Analytics.instance.logSelect(target: "Debug");
+    Navigator.push(context, CupertinoPageRoute(builder: (context) => SettingsDebugPanel()));
+  }
+
+  // Version Info
+
   Widget _buildVersionInfo(){
     return Container(
       alignment: Alignment.center,

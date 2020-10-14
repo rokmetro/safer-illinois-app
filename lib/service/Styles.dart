@@ -78,6 +78,15 @@ class Styles extends Service implements NotificationsListener{
   }
 
   @override
+  Future<void> clearService() async {
+    AppFile.delete(_cacheFile);
+    _stylesData = null;
+    _colors = null;
+    _fontFamilies = null;
+    _uiStyles = null;
+  }
+
+  @override
   Set<Service> get serviceDependsOn {
     return Set.from([Config()]);
   }
@@ -288,6 +297,11 @@ class UiColors {
   Color get healthStatusRed            => _colorMap['healthStatusRed'];
 
   Color get lightBlue                  => _colorMap['lightBlue'];
+
+  Color get healthLocationWaitTimeColorRed        => _colorMap['healthLocationWaitTimeColorRed'];
+  Color get healthLocationWaitTimeColorYellow     => _colorMap['healthLocationWaitTimeColorYellow'];
+  Color get healthLocationWaitTimeColorGreen      => _colorMap['healthLocationWaitTimeColorGreen'];
+  Color get healthLocationWaitTimeColorGrey       => _colorMap['healthLocationWaitTimeColorGrey'];
 
   Color getColor(String key){
     dynamic color = _colorMap[key];

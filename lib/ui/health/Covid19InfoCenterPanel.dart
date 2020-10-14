@@ -19,10 +19,12 @@ import 'dart:collection';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_html/flutter_html.dart';
+import 'package:flutter_html/style.dart';
 import 'package:illinois/model/Health.dart';
 import 'package:illinois/service/Analytics.dart';
-import 'package:illinois/service/AppDateTime.dart';
+import 'package:illinois/utils/AppDateTime.dart';
 import 'package:illinois/service/Config.dart';
+import 'package:illinois/service/Connectivity.dart';
 import 'package:illinois/service/Health.dart';
 import 'package:illinois/service/Localization.dart';
 import 'package:illinois/service/NotificationService.dart';
@@ -47,9 +49,8 @@ import 'package:illinois/utils/Utils.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class Covid19InfoCenterPanel extends StatefulWidget {
-  final Covid19Status status;
 
-  Covid19InfoCenterPanel({Key key, this.status}) : super(key: key);
+  Covid19InfoCenterPanel({Key key}) : super(key: key);
 
   @override
   _Covid19InfoCenterPanelState createState() => _Covid19InfoCenterPanelState();
@@ -58,7 +59,8 @@ class Covid19InfoCenterPanel extends StatefulWidget {
 class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> implements NotificationsListener {
 
   Covid19Status _status;
-  bool          _loadingStatus;
+  bool _covid19Access = false;
+  bool _loadingStatus;
   Covid19History _lastHistory;
   String _currentCountyName;
 
@@ -67,19 +69,12 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
     super.initState();
     NotificationService().subscribe(this, [
       Health.notifyStatusChanged,
-      Health.notifyCountyStatusAvailable,
+      Health.notifyProcessingFinished,
       Health.notifyUserUpdated,
       Health.notifyHistoryUpdated,
     ]);
 
-    if (widget.status != null) {
-      _status = widget.status;
-    }
-    else {
-      _loadStatus();
-    }
-
-    _loadHistory();
+    _loadStatus();
     _loadCountyName();
   }
 
@@ -94,15 +89,24 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
     if (name == Health.notifyStatusChanged) {
       _updateStatus(param);
     }
-    else if (name == Health.notifyCountyStatusAvailable) {
-      _updateStatus(param);
+    else if (name == Health.notifyProcessingFinished) {
+      _updateStatus(param?.status);
     }
     else if (name == Health.notifyUserUpdated) {
-      if (_status?.blob == null) {
+      if (mounted && (_status?.blob == null)) {
         _loadStatus();
       }
     } else if (name == Health.notifyHistoryUpdated) {
-      _loadHistory();
+      if (mounted) {
+        if (param != null) {
+          setState(() {
+            _lastHistory = Covid19History.mostRecent(param);
+          });
+        }
+        else {
+          _loadHistory();
+        }
+      }
     }
   }
 
@@ -111,10 +115,7 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
       _loadingStatus = true;
     });
     Health().currentCountyStatus.then((Covid19Status status) {
-      setState(() {
-        _status = status;
-        _loadingStatus = Health().processingCountyStatus;
-      });
+      _updateStatus(status);
     });
   }
 
@@ -122,7 +123,11 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
     if (mounted) {
       setState(() {
         _status = status;
-        _loadingStatus = false;
+        _loadingStatus = (Health().processing == true);
+        if (Health().processing != true) {
+          _loadHistory();
+          _updateCovid19Access();
+        }
       });
     }
   }
@@ -146,6 +151,16 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
             _currentCountyName = _counties[Health().currentCountyId].nameDisplayText;
           });
         }
+      }
+    });
+  }
+
+  void _updateCovid19Access() {
+    Health().isBuildingAccessGranted(_status?.blob?.healthStatus).then((bool granted) {
+      if (mounted) {
+        setState(() {
+          _covid19Access = granted;
+        });
       }
     });
   }
@@ -223,8 +238,9 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
       return null;
     }
     String headingText = Localization().getStringEx("panel.covid19home.label.most_recent_event.title", "MOST RECENT EVENT");
-    DateTime entryDate = _lastHistory.dateUtc;
-    String dateText = (entryDate != null) ? AppDateTime().formatDateTime(entryDate, format:"MMMM dd, yyyy") : '';
+    String dateText = AppDateTime.formatDateTime(_lastHistory?.dateUtc?.toLocal(), format:"MMMM dd, yyyy") ?? '';
+    String eventExplanationText = _status?.blob?.displayEventExplanation;
+    String eventExplanationHtml = _status?.blob?.displayEventExplanationHtml;
     String historyTitle = "", info = "";
     Covid19HistoryBlob blob = _lastHistory.blob;
     if(blob.isTest){
@@ -243,6 +259,49 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
       info = blob.symptomsDisplayString;
     }
 
+    List <Widget> content = <Widget>[
+      Row(children: <Widget>[
+        Flexible(
+          flex: 3,
+          fit: FlexFit.tight,
+          child: Text(headingText, style: TextStyle(letterSpacing: 0.5, fontFamily: Styles().fontFamilies.bold, fontSize: 12, color: Styles().colors.fillColorPrimary),),
+        ),
+        Flexible(
+          flex: 2,
+          fit: FlexFit.loose,
+          child:
+          Text(dateText, style: TextStyle(fontFamily: Styles().fontFamilies.regular, fontSize: 12, color: Styles().colors.textSurface),)
+        )
+      ],),
+      Container(height: 12,),
+      Text(historyTitle, style: TextStyle(fontFamily: Styles().fontFamilies.extraBold, fontSize: 20, color: Styles().colors.fillColorPrimary),),
+    ];
+
+    if (AppString.isStringNotEmpty(info)) {
+      content.addAll(<Widget>[
+        Container(height: 12,),
+        Text(info,style: TextStyle(fontFamily: Styles().fontFamilies.regular, fontSize: 16, color: Styles().colors.textSurface),),
+      ]);
+    }
+
+    if (AppString.isStringNotEmpty(eventExplanationText)) {
+      content.addAll(<Widget>[
+          Container(height: 12,),
+          Text(eventExplanationText, style: TextStyle(fontSize:16, fontFamily: Styles().fontFamilies.regular, color: Styles().colors.textBackground),),
+      ]);
+    }
+
+    if (AppString.isStringNotEmpty(eventExplanationHtml)) {
+      content.addAll(<Widget>[
+          Container(height: 12,),
+          Html(data: eventExplanationHtml, onLinkTap: (url) => _onTapLink(url),
+            style: {
+              "body": Style(fontFamily: Styles().fontFamilies.regular, color: Styles().colors.textBackground),
+            },
+          ),
+      ]);
+    }
+
     return Semantics(container: true, child: Container(
       padding: EdgeInsets.symmetric(vertical: 16),
       decoration: BoxDecoration(color: Styles().colors.surface, borderRadius: BorderRadius.all(Radius.circular(4)), boxShadow: [BoxShadow(color: Styles().colors.blackTransparent018, spreadRadius: 2.0, blurRadius: 6.0, offset: Offset(2, 2))] ),
@@ -250,27 +309,7 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
         Stack(children: <Widget>[
           Visibility(visible: (_loadingStatus != true),
             child: Padding(padding: EdgeInsets.symmetric(horizontal: 16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-                Row(children: <Widget>[
-                  Flexible(
-                    flex: 3,
-                    fit: FlexFit.tight,
-                    child: Text(headingText, style: TextStyle(letterSpacing: 0.5, fontFamily: Styles().fontFamilies.bold, fontSize: 12, color: Styles().colors.fillColorPrimary),),
-                  ),
-                  Flexible(
-                    flex: 2,
-                    fit: FlexFit.loose,
-                    child:
-                    Text(dateText, style: TextStyle(fontFamily: Styles().fontFamilies.regular, fontSize: 12, color: Styles().colors.textSurface),)
-                  )
-                ],),
-                Container(height: 12,),
-                Text(historyTitle, style: TextStyle(fontFamily: Styles().fontFamilies.extraBold, fontSize: 20, color: Styles().colors.fillColorPrimary),),
-                info.isNotEmpty ? Container(height: 12,) : Container(),
-                info.isNotEmpty ?
-                  Text(info,style: TextStyle(fontFamily: Styles().fontFamilies.regular, fontSize: 16, color: Styles().colors.textSurface),)
-                  : Container(),
-              ],),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: content,),
             ),
           ),
           Visibility(visible: (_loadingStatus == true),
@@ -303,12 +342,12 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
   }
 
   Widget _buildNextStepSection() {
-    String nextStepTitle = _status?.blob?.displayNextStep;
+    String nextStepText = _status?.blob?.displayNextStep;
     String nextStepHtml = _status?.blob?.displayNextStepHtml;
     String warningTitle = _status?.blob?.displayWarning;
-    bool hasNextStep = AppString.isStringNotEmpty(nextStepTitle) || AppString.isStringNotEmpty(nextStepHtml) || AppString.isStringNotEmpty(warningTitle);
+    bool hasNextStep = AppString.isStringNotEmpty(nextStepText) || AppString.isStringNotEmpty(nextStepHtml) || AppString.isStringNotEmpty(warningTitle);
     String headingText = hasNextStep ? Localization().getStringEx("panel.covid19home.label.next_step.title", "NEXT STEP") : '';
-    String headingDate = (hasNextStep && (_status?.blob?.nextStepDateUtc != null)) ? AppDateTime().formatDateTime(_status.blob.nextStepDateUtc.toLocal(), format: "MMMM dd, yyyy") : '';
+    String headingDate = (hasNextStep && (_status?.blob?.nextStepDateUtc != null)) ? AppDateTime.formatDateTime(_status.blob.nextStepDateUtc.toLocal(), format: "MMMM dd, yyyy") : '';
 
     List<Widget> content = <Widget>[
       Row(children: <Widget>[
@@ -318,17 +357,21 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
       ],),
     ];
 
-    if (AppString.isStringNotEmpty(nextStepTitle)) {
+    if (AppString.isStringNotEmpty(nextStepText)) {
       content.addAll(<Widget>[
           Container(height: 12,),
-          Text(nextStepTitle, style: TextStyle(fontFamily: Styles().fontFamilies.extraBold, fontSize: 20, color: Styles().colors.fillColorPrimary),),
+          Text(nextStepText, style: TextStyle(fontFamily: Styles().fontFamilies.extraBold, fontSize: 20, color: Styles().colors.fillColorPrimary),),
       ]);
     }
 
     if (AppString.isStringNotEmpty(nextStepHtml)) {
       content.addAll(<Widget>[
           Container(height: 12,),
-          Html(data: nextStepHtml, onLinkTap: (url) => _onTapLink(url), defaultTextStyle: TextStyle(fontSize: 16, fontFamily: Styles().fontFamilies.regular, color: Styles().colors.textBackground),),
+          Html(data: nextStepHtml, onLinkTap: (url) => _onTapLink(url),
+            style: {
+              "body": Style(fontFamily: Styles().fontFamilies.regular, color: Styles().colors.textBackground)
+            },
+          ),
       ]);
     }
 
@@ -441,7 +484,14 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
                   Expanded(child:
                     Text(Localization().getStringEx("panel.covid19home.label.status.title","Current Status:"), style: TextStyle(fontFamily: Styles().fontFamilies.bold, fontSize: 16, color: Styles().colors.fillColorPrimary),),
                   ),
-                  IconButton(icon: Image.asset('images/icon-info-orange.png'), onPressed: () =>  StatusInfoDialog.show(context, _currentCountyName), padding: EdgeInsets.all(10),)
+                  Semantics(
+                    explicitChildNodes: true,
+                    child: Semantics(
+                      label: Localization().getStringEx("panel.covid19home.button.info.title","Info "),
+                      button: true,
+                      excludeSemantics: true,
+                      child:  IconButton(icon: Image.asset('images/icon-info-orange.png'), onPressed: () =>  StatusInfoDialog.show(context, _currentCountyName), padding: EdgeInsets.all(10),)
+                  ))
                 ],),
                 Container(height: 6,),
                 Row(
@@ -452,7 +502,15 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
                       Text(AppString.isStringNotEmpty(statusName) ? statusName : Localization().getStringEx('panel.covid19home.label.status.na', 'Not Available'), style: TextStyle(fontFamily: Styles().fontFamilies.medium, fontSize: 16, color: Styles().colors.textSurface),),
                     )
                   ],
-                )
+                ),
+                Container(height: 6,),
+                Row(
+                  children: <Widget>[
+                    Expanded(child:
+                    Text(AppString.isStringNotEmpty(_accessStatusText) ? _accessStatusText : Localization().getStringEx('panel.covid19home.label.status.na', 'Not Available'), style: TextStyle(fontFamily: Styles().fontFamilies.medium, fontSize: 16, color: Styles().colors.textSurface),),
+                    )
+                  ],
+                ),
               ],),
             ),
           ),
@@ -593,100 +651,98 @@ class _Covid19InfoCenterPanelState extends State<Covid19InfoCenterPanel> impleme
       ),
     );
   }
-  
-
-  /*Widget _buildCampusUpdatesSection() {
-    String title = Localization().getStringEx("panel.covid19home.label.campus_updates.title","Campus Updates");
-    return Semantics(container: true, child:
-      InkWell(onTap: () => _onTapCampusUpdates(), child:
-        Container(
-          padding: EdgeInsets.symmetric(vertical: 16, horizontal: 16
-          ),
-          decoration: BoxDecoration(color: Styles().colors.surface, borderRadius: BorderRadius.all(Radius.circular(4)), boxShadow: [BoxShadow(color: Styles().colors.blackTransparent018, spreadRadius: 2.0, blurRadius: 6.0, offset: Offset(2, 2))] ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: <Widget>[
-            Row(children: <Widget>[
-              Expanded(child:
-                Text(title, style: TextStyle(fontFamily: Styles().fontFamilies.extraBold, fontSize: 20, color: Styles().colors.fillColorPrimary),),
-              ),
-              Image.asset('images/chevron-right.png'),
-            ],),
-          ],),),),
-      );
-  }*/
-
-  /*Widget _buildAboutButton() {
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(4),
-        boxShadow: [BoxShadow(color: Color.fromRGBO(19, 41, 75, 0.3), spreadRadius: 2.0, blurRadius: 8.0, offset: Offset(0, 2))],
-      ),
-      child: RibbonButton(
-        label: Localization().getStringEx("panel.covid19home.button.about.title","About"),
-        borderRadius: BorderRadius.circular(4),
-        onTap: ()=>_onTapAbout(),
-      ),
-    );
-  }*/
 
   void _onTapCountryGuidelines() {
-    Analytics.instance.logSelect(target: "COVID-19 County Guidlines");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19GuidelinesPanel(status: _status)));
-  }
-
-  /*void _onTapCampusUpdates() {
-    Analytics.instance.logSelect(target: "COVID-19 Campus Updates");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19UpdatesPanel()));
-  }*/
-
-  void _onTapCareTeam() {
-    Analytics.instance.logSelect(target: "Your Care Team");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19CareTeamPanel(status: _status,)));
-  }
-
-  void _onTapReportTest(){
-    Analytics.instance.logSelect(target: "COVID-19 Report Test");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19AddTestResultPanel()));
-  }
-
-  void _onTapTestHistory(){
-    Analytics.instance.logSelect(target: "COVID-19 Test History");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19HistoryPanel()));
-  }
-
-  void _onTapFindLocations(){
-    Analytics.instance.logSelect(target: "COVID-19 Find Test Locations");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19TestLocationsPanel()));
-  }
-
-  void _onTapShowStatusCard(){
-    Analytics.instance.logSelect(target: "Show Status Card");
-    Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19StatusPanel()));
-  }
-
-  void _onTapSymptomCheckIn() {
-    Analytics.instance.logSelect(target: "Symptom Check-in");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19SymptomsPanel()));
-  }
-
-  void _onTapCovidWellnessCenter(){
-    Analytics.instance.logSelect(target: "Wellness Center");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19WellnessCenter()));
-  }
-
-  void _onTapLink(String url) {
-    if (AppString.isStringNotEmpty(url)) {
-      if (AppUrl.launchInternal(url)) {
-        Navigator.push(context, CupertinoPageRoute(builder: (context) => WebPanel(url: url)));
-      } else {
-        launch(url);
-      }
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "COVID-19 County Guidlines");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19GuidelinesPanel(status: _status)));
+    } else{
+      AppAlert.showOfflineMessage(context);
     }
   }
 
-  /*void _onTapAbout() {
-    Analytics.instance.logSelect(target: "About");
-    Navigator.push(context, CupertinoPageRoute(builder: (context)=>Covid19AboutPanel()));
-  }*/
+  void _onTapCareTeam() {
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Your Care Team");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19CareTeamPanel(status: _status,)));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapReportTest(){
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "COVID-19 Report Test");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19AddTestResultPanel()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapTestHistory(){
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "COVID-19 Test History");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19HistoryPanel()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapFindLocations(){
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "COVID-19 Find Test Locations");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19TestLocationsPanel()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapShowStatusCard(){
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Show Status Card");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19StatusPanel()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapSymptomCheckIn() {
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Symptom Check-in");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19SymptomsPanel()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapCovidWellnessCenter(){
+    if(Connectivity().isNotOffline) {
+      Analytics.instance.logSelect(target: "Wellness Center");
+      Navigator.push(context, CupertinoPageRoute(builder: (context) => Covid19WellnessCenter()));
+    } else{
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  void _onTapLink(String url) {
+    if (Connectivity().isNotOffline) {
+      if (AppString.isStringNotEmpty(url)) {
+        if (AppUrl.launchInternal(url)) {
+          Navigator.push(context, CupertinoPageRoute(builder: (context) => WebPanel(url: url)));
+        } else {
+          launch(url);
+        }
+      }
+    } else {
+      AppAlert.showOfflineMessage(context);
+    }
+  }
+
+  String get _accessStatusText{
+    return Localization().getStringEx("panel.covid19home.label.access.title", "Building access")+ " "+
+            (_covid19Access? Localization().getStringEx("panel.covid19home.label.access.granted","granted"):
+                            Localization().getStringEx("panel.covid19home.label.access.denied","denied"));
+  }
 }
 
 class _Covid19HomeHeaderBar extends AppBar {
@@ -697,10 +753,17 @@ class _Covid19HomeHeaderBar extends AppBar {
   final String rightButtonText;
   final GestureTapCallback onRightButtonTap;
 
-  static Color get _titleColor =>
-      Config().configEnvironment == ConfigEnvironment.dev
-          ? Colors.yellow : Config().configEnvironment == ConfigEnvironment.test ? Colors.green
-          : Colors.white;
+  static Color get _titleColor  {
+    if (Config().isDev) {
+      return Colors.yellow;
+    }
+    else if (Config().isTest) {
+      return Colors.green;
+    }
+    else {
+      return Colors.white;
+    }
+  }
 
   _Covid19HomeHeaderBar({@required this.context, this.titleWidget, this.searchVisible = false,
     this.rightButtonVisible = false, this.rightButtonText, this.onRightButtonTap})

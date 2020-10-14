@@ -207,36 +207,16 @@ class AppLocation {
 
 class AppJson {
 
-  static List<dynamic> encodeList(List items) {
-    List<dynamic> result = new List();
-    if (items != null && items.isNotEmpty) {
-      items.forEach((item) {
-        result.add(item.toJson());
-      });
-    }
-
-    return result;
-  }
-
-  static List<String> castToStringList(List<dynamic> items) {
-    if (items == null)
-      return null;
-
-    List<String> result = new List();
-    if (items != null && items.isNotEmpty) {
-      items.forEach((item) {
-        result.add(item is String ? item : item.toString());
-      });
-    }
-
-    return result;
-  }
-
-  static String encode(dynamic value) {
+  static String encode(dynamic value, { bool prettify }) {
     String result;
     if (value != null) {
       try {
-        result = json.encode(value);
+        if (prettify == true) {
+          result = JsonEncoder.withIndent("  ").convert(value);
+        }
+        else {
+          result = json.encode(value);
+        }
       } catch (e) {
         Log.e(e?.toString());
       }
@@ -310,13 +290,25 @@ class AppJson {
   }
 }
 
+class AppFile {
+  static Future<void> delete(File file) async {
+    try { 
+      if ((file != null) && await file.exists()) {
+        await file.delete();
+      }
+    } catch (e) {
+      print(e?.toString());
+    }
+  }
+}
+
 class AppToast {
   static void show(String msg) {
     Fluttertoast.showToast(
       msg: msg,
       textColor: Colors.white,
       toastLength: Toast.LENGTH_LONG,
-      timeInSecForIos: 3,
+      timeInSecForIosWeb: 3,
       gravity: ToastGravity.BOTTOM,
       backgroundColor: Styles().colors.blackTransparent06,
     );
@@ -360,13 +352,13 @@ class AppAlert {
     return alertDismissed;
   }
 
-  static Future<bool> showOfflineMessage(BuildContext context, String message) async {
+  static Future<bool> showOfflineMessage(BuildContext context, [String message]) async {
     return showDialog(context: context, builder: (context) {
       return AlertDialog(
         content: Column(mainAxisSize: MainAxisSize.min, children: <Widget>[
           Text(Localization().getStringEx("app.offline.message.title", "You appear to be offline"), style: TextStyle(fontSize: 18),),
-          Container(height:16),
-          Text(message, textAlign: TextAlign.center,),
+          Container(height: AppString.isStringNotEmpty(message) ? 16 : 0),
+          AppString.isStringNotEmpty(message) ? Text(message, textAlign: TextAlign.center,) : Container(),
         ],),
         actions: <Widget>[
           FlatButton(

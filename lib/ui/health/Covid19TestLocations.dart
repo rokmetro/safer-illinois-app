@@ -27,8 +27,8 @@ import 'package:illinois/service/Localization.dart';
 import 'package:illinois/service/Storage.dart';
 import 'package:illinois/ui/widgets/HeaderBar.dart';
 import 'package:illinois/service/Styles.dart';
-import 'package:illinois/service/User.dart';
 import 'package:illinois/service/LocationServices.dart';
+import 'package:sprintf/sprintf.dart';
 
 class Covid19TestLocationsPanel extends StatefulWidget {
   _Covid19TestLocationsPanelState createState() => _Covid19TestLocationsPanelState();
@@ -81,7 +81,7 @@ class _Covid19TestLocationsPanelState extends State<Covid19TestLocationsPanel>{
   @override
   Widget build(BuildContext context) {
     int itemsLength = _locations?.length ?? 0;
-    itemsLength+= 2; // for dropdowns
+    itemsLength+= 3; // for dropdowns + 1 for empty
     return Scaffold(
       backgroundColor: Styles().colors.background,
       appBar: SimpleHeaderBarWithBack(
@@ -94,22 +94,38 @@ class _Covid19TestLocationsPanelState extends State<Covid19TestLocationsPanel>{
         ? Center(child: CircularProgressIndicator(),)
         : Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: itemsLength>0? ListView.builder(
-            itemCount: itemsLength,
-            itemBuilder: (BuildContext context, int index) {
-              if(index == 0)
-                return _buildCountyField();
-              if(index == 1)
-                return _buildProviderField();
+          child:
+              itemsLength>0? ListView.builder(
+                itemCount: itemsLength,
+                itemBuilder: (BuildContext context, int index) {
+                  if(index == 0)
+                    return _buildCountyField();
+                  if(index == 1)
+                    return _buildProviderField();
+                  if(index == 2)
+                    return _buildEmpty();
 
-              index -= 2; //for dropdowns
-              HealthServiceLocation location = (_locations?.isNotEmpty ?? false)? _locations[index] : null;
-              //double distance = _locationData!=null && location!=null? AppLocation.distance(location.latitude, location.longitude, _locationData.latitude, _locationData.longitude) : 0;
-              return _TestLocation(testLocation: location, /*distance: distance,*/);
-            },
-          ) : Container(),
+                  index -= 3; //for dropdowns
+                  HealthServiceLocation location = (_locations?.isNotEmpty ?? false)? _locations[index] : null;
+                  //double distance = _locationData!=null && location!=null? AppLocation.distance(location.latitude, location.longitude, _locationData.latitude, _locationData.longitude) : 0;
+                  return location!=null? _TestLocation(testLocation: location, /*distance: distance,*/): Container();
+                },
+              ) :Container(),
         ),
     );
+  }
+
+  Widget _buildEmpty(){
+    return (_locations?.isEmpty?? false) ?
+    Row(children: [
+      Expanded(child: Container(
+          child: Center(child:
+          Text(sprintf(Localization().getStringEx("panel.covid19_test_locations.empty.title", "No test location available for %s provider"),['${_selectedProviderItem?.provider?.name ?? "All"}']),
+            style: TextStyle(color: Styles().colors.textSurface, fontSize: 16, fontFamily: Styles().fontFamilies.regular), textAlign: TextAlign.center,
+          ),)
+      ))
+    ],)
+     : Container();
   }
 
   void _sortLocations() async{
@@ -126,22 +142,18 @@ class _Covid19TestLocationsPanelState extends State<Covid19TestLocationsPanel>{
 
   void _loadLocationsServicesData(){
 
-    if (User().privacyMatch(2)) {
-      LocationServices.instance.status.then((LocationServicesStatus locationServicesStatus) {
-        _locationServicesStatus = locationServicesStatus;
+    LocationServices.instance.status.then((LocationServicesStatus locationServicesStatus) {
+      _locationServicesStatus = locationServicesStatus;
 
-        if (_locationServicesStatus == LocationServicesStatus.PermissionNotDetermined) {
-          LocationServices.instance.requestPermission().then((LocationServicesStatus locationServicesStatus) {
-            _locationServicesStatus = locationServicesStatus;
-            _sortLocations();
-          });
-        } else {
+      if (_locationServicesStatus == LocationServicesStatus.PermissionNotDetermined) {
+        LocationServices.instance.requestPermission().then((LocationServicesStatus locationServicesStatus) {
+          _locationServicesStatus = locationServicesStatus;
           _sortLocations();
-        }
-      });
-    } else {
-      _sortLocations();
-    }
+        });
+      } else {
+        _sortLocations();
+      }
+    });
   }
 
   Widget _buildCountyField(){
@@ -323,7 +335,7 @@ class _Covid19TestLocationsPanelState extends State<Covid19TestLocationsPanel>{
   }
 
   bool get _userLocationEnabled {
-    return User().privacyMatch(2) && (_locationServicesStatus == LocationServicesStatus.PermissionAllowed);
+    return (_locationServicesStatus == LocationServicesStatus.PermissionAllowed);
   }
 }
 
@@ -338,6 +350,22 @@ class _TestLocation extends StatelessWidget{
 
     String distanceSufix = Localization().getStringEx("panel.covid19_test_locations.distance.text","mi away get directions");
     String distanceText = distance?.toStringAsFixed(2);
+    HealthLocationWaitTimeColor waitTimeColor = testLocation.waitTimeColor;
+    bool isWaitTimeAvailable = (waitTimeColor == HealthLocationWaitTimeColor.red) ||
+        (waitTimeColor == HealthLocationWaitTimeColor.yellow) ||
+        (waitTimeColor == HealthLocationWaitTimeColor.green);
+    String waitTimeText = Localization().getStringEx('panel.covid19_test_locations.wait_time.label', 'Wait Time') +
+        (isWaitTimeAvailable ? '' : (' ' + Localization().getStringEx('panel.covid19_test_locations.wait_time.unavailable', 'Unavailable')));
+    String waitTimeStatusText ="";
+    if(isWaitTimeAvailable){
+      if(waitTimeColor == HealthLocationWaitTimeColor.red){
+        waitTimeStatusText = Localization().getStringEx('panel.covid19_test_locations.wait_time.status.label.red', 'Long');
+      } else if(waitTimeColor == HealthLocationWaitTimeColor.yellow){
+        waitTimeStatusText = Localization().getStringEx('panel.covid19_test_locations.wait_time.status.label.yellow', 'Medium');
+      } else if(waitTimeColor == HealthLocationWaitTimeColor.green){
+        waitTimeStatusText = Localization().getStringEx('panel.covid19_test_locations.wait_time.status.label.green', 'Short');
+      }
+    }
     return
       Semantics(button: false, container: true, child:
         Container(
@@ -403,7 +431,46 @@ class _TestLocation extends StatelessWidget{
                 ],
               ))
             )),*/
-            Semantics(explicitChildNodes:true,button: false, child:
+            Container(
+                padding: EdgeInsets.only(top: 4),
+                child: Row(
+                  children: <Widget>[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: <Widget>[
+                        Padding(
+                          padding: EdgeInsets.only(right: 8),
+                          child: Container(
+                            width: 16,
+                            height: 16,
+                            decoration: BoxDecoration(color: HealthServiceLocation.waitTimeColorHex(waitTimeColor), shape: BoxShape.circle),
+                          ),
+                        ),
+                        Padding(
+                          padding: EdgeInsets.only(right: 8),
+                          child: Text(
+                            waitTimeStatusText,
+                            style: TextStyle(
+                              fontFamily: Styles().fontFamilies.regular,
+                              fontSize: 16,
+                              color: Styles().colors.textSurface,
+                            ),
+                          )
+                        ),
+                        Text(
+                          waitTimeText,
+                          style: TextStyle(
+                            fontFamily: Styles().fontFamilies.regular,
+                            fontSize: 16,
+                            color: Styles().colors.textSurface,
+                          ),
+                        )
+                      ],
+                    )
+                  ],
+                )),
+              Semantics(explicitChildNodes:true,button: false, child:
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: <Widget>[
@@ -527,40 +594,6 @@ class _TestLocation extends StatelessWidget{
     }
     return null;
   }
-
-  /*bool _determineIsOpen(HealthLocationDayOfOperation period){
-    String start = period?.openTime?.toUpperCase();
-    String end = period?.closeTime?.toUpperCase();
-    TimeOfDay startPeriod = start!=null? TimeOfDay.fromDateTime(AppDateTime().dateTimeFromString(start,format: "hh:mma")) : null;
-    TimeOfDay endPeriod = end!=null? TimeOfDay.fromDateTime(AppDateTime().dateTimeFromString(end,format: "hh:mma")) : null;
-    TimeOfDay now = TimeOfDay.fromDateTime(DateTime.now());
-    if(startPeriod!=null && endPeriod!=null){
-      int startMinutes = startPeriod.hour * 60 + startPeriod.minute;
-      int endtMinutes = endPeriod.hour * 60 + endPeriod.minute;
-      int nowMinutes = now.hour * 60 + now.minute;
-
-      return startMinutes<nowMinutes && nowMinutes<endtMinutes;
-    }
-
-    return false;
-  }*/
-
-  /*bool _determineWillOpen(HealthLocationDayOfOperation period) {
-    String start = period?.openTime?.toUpperCase();
-    TimeOfDay startPeriod = start != null
-        ? TimeOfDay.fromDateTime(
-            AppDateTime().dateTimeFromString(start, format: "hh:mma"))
-        : null;
-    TimeOfDay now = TimeOfDay.fromDateTime(DateTime.now());
-    if (startPeriod != null) {
-      int startMinutes = startPeriod.hour * 60 + startPeriod.minute;
-      int nowMinutes = now.hour * 60 + now.minute;
-
-      return nowMinutes < startMinutes;
-    }
-
-    return false;
-  }*/
 
   /*void _onTapContact() async{
     await url_launcher.launch("tel:"+testLocation?.contact ?? "");

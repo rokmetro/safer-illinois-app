@@ -95,7 +95,6 @@ class Config with Service implements NotificationsListener {
   String get rokwireAuthUrl         { return platformBuildingBlocks['rokwire_auth_url']; }            // "https://api-dev.rokwire.illinois.edu/authentication"
   String get sportsServiceUrl       { return platformBuildingBlocks['sports_service_url']; }          // "https://api-dev.rokwire.illinois.edu/sports-service";
   String get healthUrl              { return platformBuildingBlocks['health_url']; }                  // "https://api-dev.rokwire.illinois.edu/health"
-  String get health2Url             { return platformBuildingBlocks['health2_url']; }                 // "https://rokwire-ios-beta.s3.us-east-2.amazonaws.com/covid/v2.2/dev"
   String get talentChooserUrl       { return platformBuildingBlocks['talent_chooser_url']; }          // "https://api-dev.rokwire.illinois.edu/talent-chooser/api/ui-content"
   String get transportationUrl      { return platformBuildingBlocks["transportation_url"]; }          // "https://api-dev.rokwire.illinois.edu/transportation"
   String get locationsUrl           { return platformBuildingBlocks["locations_url"]; }               // "https://api-dev.rokwire.illinois.edu/location/api";
@@ -143,14 +142,45 @@ class Config with Service implements NotificationsListener {
   @override
   Future<void> initService() async {
 
-    _configEnvironment = configEnvFromString(Storage().configEnvironment) ??
-      (kReleaseMode ? ConfigEnvironment.production : ConfigEnvironment.dev);
+    _configEnvironment = configEnvFromString(Storage().configEnvironment) ?? _defaultConfigEnvironment;
 
-    _packageInfo = await PackageInfo.fromPlatform();
-    _appDocumentsDir = await getApplicationDocumentsDirectory();
-    Log.d('Application Documents Directory: ${_appDocumentsDir.path}');
+    if (_packageInfo == null) {
+      _packageInfo = await PackageInfo.fromPlatform();
+    }
 
-    await _init();
+    if (_appDocumentsDir == null) {
+      _appDocumentsDir = await getApplicationDocumentsDirectory();
+      Log.d('Application Documents Directory: ${_appDocumentsDir.path}');
+    }
+
+    _config = await _loadFromFile(_configFile);
+
+    if (_config == null) {
+      _configAsset = await _loadFromAssets();
+      String configString = await _loadAsStringFromNet();
+      _configAsset = null;
+
+      _config = (configString != null) ? _configFromJsonString(configString) : null;
+      if (_config != null) {
+        _configFile.writeAsStringSync(configString, flush: true);
+        NotificationService().notify(notifyConfigChanged, null);
+        
+        _checkUpgrade();
+      }
+    }
+    else {
+      _checkUpgrade();
+      _updateFromNet();
+    }
+
+  }
+
+  @override
+  Future<void> clearService() async {
+    AppFile.delete(_configFile);
+    _configEnvironment = _defaultConfigEnvironment;
+    _config = _configAsset = null;
+    _reportedUpgradeVersions.clear();
   }
 
   @override
@@ -233,29 +263,6 @@ class Config with Service implements NotificationsListener {
       }
     }
     return false;
-  }
-
-  Future<void> _init() async {
-    
-    _config = await _loadFromFile(_configFile);
-
-    if (_config == null) {
-      _configAsset = await _loadFromAssets();
-      String configString = await _loadAsStringFromNet();
-      _configAsset = null;
-
-      _config = (configString != null) ? _configFromJsonString(configString) : null;
-      if (_config != null) {
-        _configFile.writeAsStringSync(configString, flush: true);
-        NotificationService().notify(notifyConfigChanged, null);
-        
-        _checkUpgrade();
-      }
-    }
-    else {
-      _checkUpgrade();
-      _updateFromNet();
-    }
   }
 
   void _updateFromNet() {
@@ -360,19 +367,33 @@ class Config with Service implements NotificationsListener {
 
   // Environment
 
-  set configEnvironment(ConfigEnvironment configEnvironment) {
-    if (_configEnvironment != configEnvironment) {
-      _configEnvironment = configEnvironment;
-      Storage().configEnvironment = configEnvToString(_configEnvironment);
+  ConfigEnvironment get configEnvironment {
+    return _configEnvironment;
+  }
 
-      _init().then((_){
-        NotificationService().notify(notifyEnvironmentChanged, null);
-      });
+  Future<void> setConfigEnvironment(ConfigEnvironment configEnvironment) async {
+    if (_configEnvironment != configEnvironment) {
+      await Services().clear();
+      Storage().configEnvironment = configEnvToString(configEnvironment);
+      await Services().init();
+      NotificationService().notify(notifyEnvironmentChanged);
     }
   }
 
-  ConfigEnvironment get configEnvironment {
-    return _configEnvironment;
+  static ConfigEnvironment get _defaultConfigEnvironment {
+    return kReleaseMode ? ConfigEnvironment.production : ConfigEnvironment.dev;
+  }
+
+  bool get isDev {
+    return _configEnvironment == ConfigEnvironment.dev;
+  }
+
+  bool get isTest {
+    return _configEnvironment == ConfigEnvironment.test;
+  }
+
+  bool get isProduction {
+    return _configEnvironment == ConfigEnvironment.test;
   }
 
   // Assets cache path
